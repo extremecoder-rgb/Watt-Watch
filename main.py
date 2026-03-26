@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.detector import YOLODetector
 from src.tracker import create_tracker
 from src.utils import FPSCounter, VideoFrameExtractor, JSONLogger
+from src.appliance_status import ApplianceStatusRecognizer
 
 
 def load_config():
@@ -59,6 +60,18 @@ def cmd_detect(args, config):
     # Setup FPS log file
     fps_log_path = Path(config.get("logging", {}).get("fps_log_file", "logs/fps.log"))
     fps_log_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize appliance recognizer if enabled
+    appliance_config = config.get("appliance", {})
+    appliance_recognizer = None
+    appliance_results = {"light": [], "ceiling_fan": []}
+    
+    if appliance_config.get("enabled", False):
+        try:
+            appliance_recognizer = ApplianceStatusRecognizer()
+            print("Appliance status recognition initialized")
+        except Exception as e:
+            print(f"Warning: Could not initialize appliance recognizer: {e}")
     
     # Check if input is video or image
     input_path = Path(args.input)
@@ -140,6 +153,28 @@ def cmd_detect(args, config):
             if frame_index % 30 == 0:
                 print(f"Frame {frame_index}: {count} people, unique: {unique_count}, FPS: {current_fps:.1f}, Avg: {avg_fps:.1f}")
             
+            # Detect appliance status (less frequent)
+            if appliance_recognizer and frame_index % appliance_config.get("frame_skip", 10) == 0:
+                try:
+                    appliance_statuses = appliance_recognizer.detect_all_appliances(frame)
+                    for status in appliance_statuses:
+                        if status.appliance_type.value == "light":
+                            appliance_results["light"].append({
+                                "frame": frame_index,
+                                "status": status.status.value,
+                                "confidence": status.confidence
+                            })
+                            print(f"  -> Light: {status.status.value} (conf: {status.confidence:.2f})")
+                        elif status.appliance_type.value == "ceiling_fan":
+                            appliance_results["ceiling_fan"].append({
+                                "frame": frame_index,
+                                "status": status.status.value,
+                                "confidence": status.confidence
+                            })
+                            print(f"  -> Ceiling Fan: {status.status.value} (conf: {status.confidence:.2f})")
+                except Exception as e:
+                    print(f"  -> Appliance detection error: {e}")
+            
             # Save frame with detections if output enabled
             if args.output and frame_index % 100 == 0:
                 from src.utils import draw_detections
@@ -171,6 +206,24 @@ def cmd_detect(args, config):
     print(f"Results saved to: {logger.output_path}")
     print(f"FPS log saved to: {fps_log_path}")
     
+    # Print appliance detection summary
+    if appliance_recognizer:
+        print("\n--- Appliance Status Summary ---")
+        for appliance_type, results in appliance_results.items():
+            if results:
+                on_count = sum(1 for r in results if r["status"] == "ON")
+                off_count = sum(1 for r in results if r["status"] == "OFF")
+                print(f"{appliance_type}: ON={on_count}, OFF={off_count}, frames={len(results)}")
+            else:
+                print(f"{appliance_type}: No detections")
+        
+        # Save appliance results
+        import json
+        appliance_output_path = output_dir / "appliance_status.json"
+        with open(appliance_output_path, "w") as f:
+            json.dump(appliance_results, f, indent=2)
+        print(f"Appliance results saved to: {appliance_output_path}")
+    
     return 0
 
 
@@ -197,8 +250,6 @@ def cmd_live(args, config):
     fps_counter = FPSCounter()
     
     print("Press 'q' to quit")
-    
-    import cv2
     
     while True:
         frame = extractor.read_frame()

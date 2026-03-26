@@ -3,7 +3,7 @@
 
 # Model settings
 model:
-  name: "yolov8s.pt"  # small model for better accuracy
+  name: "yolov8n.pt"  # nano model for massive speedup
   confidence_threshold: 0.55
   person_class_id: 0
 
@@ -51,3 +51,17 @@ test_clips:
   occupied: "data/clips/occupied.mp4"
   empty: "data/clips/empty.mp4"
   quiet_reader: "data/clips/quiet-reader.mp4"
+
+# Appliance detection settings
+appliance:
+  # Enable appliance status detection
+  enabled: true
+  # Process every N frames for appliance detection (less frequent than person detection)
+  frame_skip: 20  # Reduced frequency to save CPU/Network
+  # Roboflow API settings
+  roboflow:
+    api_key: "p3oHA7T2HAO4pgy61Vae"
+    light_model: "coms-room-light-63vyv/1"
+    fan_model: "ceiling-fan-detection-epfsk/1"
+  # Use temp files for API inference
+  use_temp_files: true
