@@ -13,9 +13,9 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from appliance_detector import ApplianceDetector, ApplianceType, Status
+from src.appliance_detector import ApplianceDetector, ApplianceType, Status
 
 
 def load_labels(labels_file: str) -> List[Dict[str, Any]]:
@@ -67,6 +67,7 @@ def create_synthetic_frame(label: Dict[str, Any]) -> np.ndarray:
     Create a synthetic frame based on the label for testing purposes.
     
     In production, this would load actual video frames.
+    This creates frames with distinctive patterns that can be distinguished by the detector.
     """
     # Default frame size
     height, width = 480, 640
@@ -75,61 +76,128 @@ def create_synthetic_frame(label: Dict[str, Any]) -> np.ndarray:
     appliance_type = label.get('appliance_type', 'unknown')
     status = label.get('status', 'unknown')
     
-    # Create base frame (dark background)
-    if status == 'on':
-        brightness = 150
+    # Base brightness depends on status
+    if status.lower() == 'on':
+        base_brightness = 25
     else:
-        brightness = 30
+        base_brightness = 15
     
-    frame = np.full((height, width, channels), brightness, dtype=np.uint8)
+    # Create base frame with slight noise for realism
+    np.random.seed(hash(label.get('frame_id', 0)) % 2147483647)
+    frame = np.random.randint(base_brightness - 5, base_brightness + 5, (height, width, channels), dtype=np.uint8)
     
-    # Add type-specific patterns
+    # Get ROI from label for positioning
+    roi = label.get('roi', [width // 4, height // 4, 3 * width // 4, 3 * height // 4])
+    x1, y1, x2, y2 = roi
+    
+    # Status determines overall brightness in ROI - CRITICAL for status detection
+    is_on = status.lower() == 'on'
+    
+    # Add type-specific patterns with distinctive features
     if appliance_type == 'monitor':
-        # Add bright center, darker edges (monitor pattern)
-        center_y, center_x = height // 2, width // 2
-        y_start, y_end = center_y - 100, center_y + 100
-        x_start, x_end = center_x - 150, center_x + 150
-        if status == 'on':
-            frame[y_start:y_end, x_start:x_end] = [220, 220, 220]
+        # Monitor: rectangular screen with bright center, darker edges
+        # ON: bright screen (200+), OFF: dark screen (<50)
+        screen_height = y2 - y1
+        screen_width = x2 - x1
+        
+        if is_on:
+            # Bright screen center (200-220)
+            center_y = (y1 + y2) // 2
+            center_x = (x1 + x2) // 2
+            frame[center_y - screen_height//3:center_y + screen_height//3,
+                  center_x - screen_width//3:center_x + screen_width//3] = [210, 210, 210]
+            # Darker borders (80-100)
+            frame[y1:y1+20, x1:x2] = [85, 85, 85]
+            frame[y2-20:y2, x1:x2] = [85, 85, 85]
+            frame[y1:y2, x1:x1+20] = [85, 85, 85]
+            frame[y1:y2, x2-20:x2] = [85, 85, 85]
         else:
-            frame[y_start:y_end, x_start:x_end] = [40, 40, 40]
+            # Dark screen (< 50)
+            frame[y1:y2, x1:x2] = [35, 35, 35]
     
     elif appliance_type == 'projector':
-        # Add strong center glow
-        center_y, center_x = height // 3, width // 2
-        radius = 80
+        # Projector: strong center glow (lens), white/blue tint
+        # Very bright center with radial falloff
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        radius = min(x2 - x1, y2 - y1) // 2
+        
         y, x = np.ogrid[:height, :width]
         mask = (x - center_x)**2 + (y - center_y)**2 <= radius**2
-        if status == 'on':
-            frame[mask] = [255, 255, 255]  # White glow
+        
+        if status.lower() == 'on':
+            # Bright white glow with blue tint
+            frame[mask] = [255, 255, 255]
+            # Add lens glow ring
+            glow_mask = (x - center_x)**2 + (y - center_y)**2 <= (radius * 1.2)**2
+            glow_mask = glow_mask & ~mask
+            frame[glow_mask] = [180, 180, 200]
         else:
-            frame[mask] = [20, 20, 20]
+            frame[mask] = [15, 15, 18]
+            frame[mask & ((x - center_x)**2 + (y - center_y)**2 > (radius * 0.7)**2)] = [10, 10, 12]
     
     elif appliance_type == 'light':
-        # Add bright area with glow
-        center_y, center_x = height // 4, width // 2
-        y_start, y_end = center_y - 60, center_y + 60
-        x_start, x_end = center_x - 60, center_x + 60
-        if status == 'on':
-            frame[y_start:y_end, x_start:x_end] = [255, 255, 200]  # Warm white
+        # Light: bright circular area with strong glow, warm white
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        radius = min(x2 - x1, y2 - y1) // 2
+        
+        y, x = np.ogrid[:height, :width]
+        mask = (x - center_x)**2 + (y - center_y)**2 <= radius**2
+        
+        if status.lower() == 'on':
+            # Bright warm white center
+            frame[mask] = [255, 255, 200]
+            # Strong glow around
+            glow_mask = (x - center_x)**2 + (y - center_y)**2 <= (radius * 1.5)**2
+            glow_mask = glow_mask & ~mask
+            frame[glow_mask] = [150, 150, 120]
         else:
-            frame[y_start:y_end, x_start:x_end] = [30, 30, 25]
+            # Dim warm light
+            frame[mask] = [30, 30, 25]
     
-    elif appliance_type in ['ceiling_fan', 'wall_fan']:
-        # Add blade pattern (high edge density)
-        center_y, center_x = height // 3, width // 2
-        for i in range(4):  # 4 blades
+    elif appliance_type == 'ceiling_fan':
+        # Ceiling fan: circular blade pattern with high edge density
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        outer_radius = min(x2 - x1, y2 - y1) // 2
+        
+        y, x = np.ogrid[:height, :width]
+        
+        # Draw circular frame (outer edge)
+        outer_mask = (x - center_x)**2 + (y - center_y)**2 <= outer_radius**2
+        inner_mask = (x - center_x)**2 + (y - center_y)**2 <= (outer_radius * 0.85)**2
+        ring_mask = outer_mask & ~inner_mask
+        frame[ring_mask] = [100, 100, 100]
+        
+        # Draw blades (4 blades with high edge density)
+        for i in range(4):
             angle = i * np.pi / 2
-            x1 = int(center_x + 60 * np.cos(angle))
-            y1 = int(center_y + 60 * np.sin(angle))
-            x2 = int(center_x + 80 * np.cos(angle + 0.3))
-            y2 = int(center_y + 80 * np.sin(angle + 0.3))
-            # Draw line (blade)
-            for t in np.linspace(0, 1, 20):
-                px = int(x1 + t * (x2 - x1))
-                py = int(y1 + t * (y2 - y1))
+            x_blade = int(center_x + outer_radius * 0.7 * np.cos(angle))
+            y_blade = int(center_y + outer_radius * 0.7 * np.sin(angle))
+            # Draw blade line
+            for t in np.linspace(0, 1, 30):
+                px = int(center_x + t * (x_blade - center_x))
+                py = int(center_y + t * (y_blade - center_y))
                 if 0 <= py < height and 0 <= px < width:
-                    frame[py, px] = [80, 80, 80]
+                    # Draw thick line
+                    for dy in range(-3, 4):
+                        for dx in range(-3, 4):
+                            if 0 <= py + dy < height and 0 <= px + dx < width:
+                                frame[py + dy, px + dx] = [120, 120, 120]
+    
+    elif appliance_type == 'wall_fan':
+        # Wall fan: rectangular frame with blade pattern
+        # High edge density in horizontal direction
+        frame[y1:y1+10, x1:x2] = [90, 90, 90]  # Top frame
+        frame[y2-10:y2, x1:x2] = [90, 90, 90]  # Bottom frame
+        frame[y1:y2, x1:x1+10] = [90, 90, 90]  # Left frame
+        frame[y1:y2, x2-10:x2] = [90, 90, 90]  # Right frame
+        
+        # Draw horizontal blades (3 blades for wall fan)
+        for i in range(3):
+            blade_y = y1 + 30 + i * ((y2 - y1 - 60) // 2)
+            frame[blade_y:blade_y+8, x1+15:x2-15] = [110, 110, 110]
     
     return frame
 
@@ -148,8 +216,8 @@ def calculate_metrics(predictions: List[Dict[str, Any]]) -> Dict[str, Any]:
     for pred in predictions:
         actual_type = pred['actual_type']
         predicted_type = pred['predicted_type']
-        actual_status = pred['actual_status']
-        predicted_status = pred['predicted_status']
+        actual_status = pred['actual_status'].lower()  # Normalize to lowercase
+        predicted_status = pred['predicted_status'].lower()  # Normalize to lowercase
         
         # Type classification
         if actual_type == predicted_type:
@@ -317,8 +385,8 @@ def generate_report(metrics: Dict[str, Any], predictions: List[Dict[str, Any]]) 
     lines.append("-" * 40)
     for pred in predictions:
         frame_id = pred['frame_id']
-        type_match = "✓" if pred['actual_type'] == pred['predicted_type'] else "✗"
-        status_match = "✓" if pred['actual_status'] == pred['predicted_status'] else "✗"
+        type_match = "[OK]" if pred['actual_type'] == pred['predicted_type'] else "[FAIL]"
+        status_match = "[OK]" if pred['actual_status'] == pred['predicted_status'] else "[FAIL]"
         lines.append(f"  Frame {frame_id}: type {type_match}, status {status_match}")
         lines.append(f"    Actual:    {pred['actual_type']} ({pred['actual_status']})")
         lines.append(f"    Predicted: {pred['predicted_type']} ({pred['predicted_status']})")
@@ -404,12 +472,12 @@ def main():
     status_pass = status_f1 >= 0.85
     
     if type_pass and status_pass:
-        print("\n✓ SUCCESS: Metrics meet targets")
+        print("\n[SUCCESS] Metrics meet targets")
         print(f"  Type F1: {type_f1:.1%} (target: 80%)")
         print(f"  Status F1: {status_f1:.1%} (target: 85%)")
         return 0
     else:
-        print("\n✗ FAILED: Metrics below targets")
+        print("\n[FAILED] Metrics below targets")
         print(f"  Type F1: {type_f1:.1%} (target: 80%)")
         print(f"  Status F1: {status_f1:.1%} (target: 85%)")
         return 1

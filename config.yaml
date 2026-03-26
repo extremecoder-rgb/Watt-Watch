@@ -1,0 +1,53 @@
+# WattWatch Configuration
+# YOLOv8-based intelligent occupancy detection
+
+# Model settings
+model:
+  name: "yolov8s.pt"  # small model for better accuracy
+  confidence_threshold: 0.55
+  person_class_id: 0
+
+# Device settings
+device:
+  # Options: "cpu", "cuda", "mps", or null for auto-detect
+  type: null
+
+# Input/Output paths
+paths:
+  input_video: "data/test_clip.mp4"
+  output_dir: "output"
+  logs_dir: "logs"
+  models_dir: "models"
+
+# Detection settings
+detection:
+  # Process every N frames (1 = all frames, 2 = every other, etc.)
+  frame_skip: 1
+  # Minimum confidence for person detection
+  min_confidence: 0.55
+
+# Tracking settings
+tracking:
+  # Maximum distance (pixels) between centroids to match
+  max_distance: 50.0
+  # Frames to wait before removing lost track
+  max_frames_to_skip: 5
+
+# Logging settings
+logging:
+  fps_log_file: "logs/fps.log"
+  detection_log_file: "output/detections.json"
+  log_interval: 30  # Log FPS every N frames
+
+# Video processing
+video:
+  # Number of frames to buffer
+  buffer_size: 1
+  # Timeout for reading frames (seconds)
+  read_timeout: 5
+
+# Testing clips
+test_clips:
+  occupied: "data/clips/occupied.mp4"
+  empty: "data/clips/empty.mp4"
+  quiet_reader: "data/clips/quiet-reader.mp4"

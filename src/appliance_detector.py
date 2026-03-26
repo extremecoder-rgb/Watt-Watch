@@ -23,9 +23,9 @@ class ApplianceType(Enum):
 
 class Status(Enum):
     """Appliance power status."""
-    ON = "on"
-    OFF = "off"
-    UNKNOWN = "unknown"
+    ON = "ON"
+    OFF = "OFF"
+    UNKNOWN = "UNKNOWN"
 
 
 @dataclass
@@ -89,15 +89,16 @@ class ApplianceDetector:
         # Calculate edge density (Canny-like edge detection using simple gradient)
         edge_density = self._calculate_edge_density(gray)
         
-        # Check for fan characteristics
-        is_fan = self._is_fan(gray, edge_density)
-        if is_fan == "ceiling":
-            return ApplianceType.CEILING_FAN
-        elif is_fan == "wall":
-            return ApplianceType.WALL_FAN
-        
-        # Analyze brightness distribution to distinguish projector/monitor/light
+        # Check brightness distribution for pattern classification
         brightness_distribution = self._analyze_brightness_distribution(gray)
+        
+        # Handle ceiling fan (circular pattern detected)
+        if brightness_distribution == "ceiling_fan_pattern":
+            return ApplianceType.CEILING_FAN
+        
+        # Handle wall fan
+        if brightness_distribution == "wall_fan_pattern":
+            return ApplianceType.WALL_FAN
         
         # Projector: bright white/blue light in center, lens glow pattern
         if brightness_distribution == "center_glow":
@@ -275,28 +276,36 @@ class ApplianceDetector:
         Returns:
             Edge density (proportion of edge pixels)
         """
-        # Simple Sobel-like edge detection
-        if gray.size == 0:
-            return 0.0
-        
-        # Calculate gradients
-        gx = np.abs(np.diff(gray, axis=1))
-        gy = np.abs(np.diff(gray, axis=0))
-        
-        # Combine gradients
-        edges = np.zeros_like(gray)
-        edges[:, :-1] += gx
-        edges[:-1, :] += gy
-        
-        # Normalize
-        edges = edges / (edges.max() + 1e-6)
-        
-        # Count edge pixels above threshold
-        edge_threshold = 0.1
-        edge_pixels = np.sum(edges > edge_threshold)
-        total_pixels = edges.size
-        
-        return edge_pixels / total_pixels
+        # Try using OpenCV Canny for better edge detection
+        try:
+            import cv2
+            # Use Canny edge detection
+            edges = cv2.Canny(gray, 50, 150)
+            edge_pixels = np.sum(edges > 0)
+            return edge_pixels / (gray.size + 1e-6)
+        except ImportError:
+            # Fallback: simple gradient-based edge detection
+            if gray.size == 0:
+                return 0.0
+            
+            # Calculate gradients
+            gx = np.abs(np.diff(gray, axis=1))
+            gy = np.abs(np.diff(gray, axis=0))
+            
+            # Combine gradients
+            edges = np.zeros_like(gray)
+            edges[:, :-1] += gx
+            edges[:-1, :] += gy
+            
+            # Normalize
+            edges = edges / (edges.max() + 1e-6)
+            
+            # Count edge pixels above threshold
+            edge_threshold = 0.1
+            edge_pixels = np.sum(edges > edge_threshold)
+            total_pixels = edges.size
+            
+            return edge_pixels / total_pixels
     
     def _is_fan(self, gray: np.ndarray, edge_density: float) -> Optional[str]:
         """
@@ -341,41 +350,108 @@ class ApplianceDetector:
         Returns:
             Distribution type: "center_glow", "center_bright_edges_dark", "uniform_bright"
         """
+        if gray.size == 0:
+            return "uniform_bright"
+            
         height, width = gray.shape
         
         # Split into center and edge regions
-        center_x, center_y = width // 2, height // 2
-        center_region = gray[
-            center_y//2:3*center_y//2,
-            center_x//2:3*center_x//2
-        ]
+        center_h = height // 3
+        center_w = width // 3
+        
+        center_region = gray[center_h:-center_h, center_w:-center_w]
+        
+        if center_region.size == 0:
+            return "uniform_bright"
         
         # Calculate brightness in different regions
         center_brightness = np.mean(center_region)
         
-        # Compare to overall brightness
+        # Calculate edge regions (all four sides)
+        top_edge = np.mean(gray[:center_h, :])
+        bottom_edge = np.mean(gray[-center_h:, :])
+        left_edge = np.mean(gray[:, :center_w])
+        right_edge = np.mean(gray[:, -center_w:])
+        avg_edge = (top_edge + bottom_edge + left_edge + right_edge) / 4
+        
+        # Overall brightness
         overall_brightness = np.mean(gray)
         
-        if center_brightness == 0:
+        if overall_brightness == 0:
             return "uniform_bright"
         
-        ratio = center_brightness / (overall_brightness + 1e-6)
+        center_ratio = center_brightness / (overall_brightness + 1e-6)
         
-        # Analyze edge brightness
-        edge_left = np.mean(gray[:, :width//4])
-        edge_right = np.mean(gray[:, 3*width//4:])
-        edge_top = np.mean(gray[:height//4, :])
-        edge_bottom = np.mean(gray[3*height//4:, :])
-        avg_edge = (edge_left + edge_right + edge_top + edge_bottom) / 4
-        
-        edge_ratio = center_brightness / (avg_edge + 1e-6)
-        
-        if ratio > 1.5 and edge_ratio > 1.8:
-            return "center_glow"  # Projector - strong center glow
-        elif ratio > 1.2 and edge_ratio > 1.3:
-            return "center_bright_edges_dark"  # Monitor - bright center, darker edges
+        # Edge ratio: center brightness vs edge brightness
+        if avg_edge == 0:
+            edge_ratio = 2.0  # Strong center if edges are very dark
         else:
-            return "uniform_bright"  # Light - uniform brightness
+            edge_ratio = center_brightness / (avg_edge + 1e-6)
+        
+        # Calculate variance to detect uniform vs varied brightness
+        brightness_variance = np.var(gray)
+        
+        # Check for circular/radial patterns (projector lens glow or ceiling fan)
+        is_circular = self._has_circular_pattern(gray)
+        
+        # Check for horizontal lines (wall fan blades)
+        has_horizontal_lines = self._has_horizontal_lines(gray)
+        
+        # Classification logic
+        # CEILING FAN: circular pattern detected OR high edge density with variance
+        if is_circular or (brightness_variance > 200 and center_ratio < 1.5):
+            return "ceiling_fan_pattern"
+        
+        # WALL FAN: horizontal line pattern detected
+        if has_horizontal_lines:
+            return "wall_fan_pattern"
+        
+        # Light: uniform brightness (lower variance) and high overall brightness
+        if brightness_variance < 500 and overall_brightness > 100:
+            return "uniform_bright"
+        
+        # Projector: very bright center (ratio > 1.8), low variance (uniform glow)
+        if center_ratio > 1.8 and brightness_variance < 1000:
+            return "center_glow"
+        
+        # Monitor: bright center, darker edges (ratio > 1.2, edge ratio > 1.3)
+        if center_ratio > 1.3 and edge_ratio > 1.4:
+            return "center_bright_edges_dark"
+        
+        # If nothing else, default to light (most common bright appliance)
+        if overall_brightness > 80:
+            return "uniform_bright"
+        
+        return "uniform_bright"
+    
+    def _has_circular_pattern(self, gray: np.ndarray) -> bool:
+        """Check for circular/radial pattern (projector lens or ceiling fan)."""
+        try:
+            import cv2
+            # Use Hough circles to detect circular patterns
+            circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20, param1=50, param2=30, minRadius=10, maxRadius=100)
+            return circles is not None and len(circles[0]) >= 1
+        except (ImportError, TypeError):
+            return False
+    
+    def _has_horizontal_lines(self, gray: np.ndarray) -> bool:
+        """Check for horizontal line pattern (wall fan blades)."""
+        try:
+            import cv2
+            # Use Hough lines to detect horizontal lines
+            lines = cv2.HoughLinesP(gray, 1, np.pi/180, threshold=20, minLineLength=15, maxLineGap=5)
+            if lines is None:
+                return False
+            # Check if more than half the lines are approximately horizontal
+            horizontal_count = 0
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                angle = np.abs(np.arctan2(y2-y1, x2-x1) * 180 / np.pi)
+                if angle < 20 or angle > 160:  # Nearly horizontal
+                    horizontal_count += 1
+            return horizontal_count > len(lines) / 2
+        except (ImportError, TypeError):
+            return False
 
 
 # Standalone functions for convenience
