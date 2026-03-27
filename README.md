@@ -6,6 +6,20 @@ CamSense.ai is a state-of-the-art computer vision solution designed to eliminate
 
 ---
 
+## 💡 The problem it solves
+
+Conventional energy management often relies on manual walk-throughs or basic motion (PIR) sensors, which are frequently ineffective. PIR sensors often turn off lights while people are still in the room (e.g., studying quietly) or fail to detect if specific high-drain appliances like fans or monitors were left active.
+
+**CamSense.ai addresses these core challenges:**
+
+- **Eliminating "Passive Waste"**: Automatically detects "Efficiency Gaps"—scenarios where a room is empty but appliances (lights, fans, monitors) are still running.
+- **Context-Aware Monitoring**: Unlike binary motion sensors, our AI understands the difference between an empty room and a quiet but occupied one, preventing "false darkness" while ensuring appliances are off when truly not needed.
+- **Data-Driven Accountability**: Provides managers with quantifiable data ($ cost, kWh waste, CO2 impact) rather than vague guesses about where energy is being lost.
+- **Enhanced Safety**: Identifies appliances left running for extended periods, reducing the risk of overheating and electrical fire hazards.
+- **Surveillance without Intrusion**: By using real-time edge-based pixelation, we solve the problem of privacy: the system "sees" efficiency, not people, making it safe for use in offices, labs, and schools.
+
+---
+
 ## 📊 SWOT Analysis
 
 CamSense.ai leverages cutting-edge technology while maintaining a strategic focus on efficiency and scalability:
@@ -50,6 +64,28 @@ CamSense.ai leverages cutting-edge technology while maintaining a strategic focu
 -   **Privacy-First Design**: On-device pixelation and blurring of human subjects to ensure GDPR/FERPA compliance.
 -   **Micro-zone Intelligence**: Heatmap-style tracking of most-used areas within a single room.
 -   **Customizable Wattage**: Easy configuration of electricity rates and appliance power ratings via `config.yaml`.
+
+---
+
+## 🧱 Challenges I ran into
+
+Building a real-time, AI-powered system presented several technical hurdles that required creative solutions:
+
+### 1. The Latency Trap
+**Problem**: Real-time high-resolution video processing often leads to a 3–5 second lag between frame capture and detection display.
+**Solution**: We implemented a frame-skipping logic and background inference threads. By separating the UI refresh rate from the AI detection cycle, we maintained a smooth dashboard experience without sacrificing detection accuracy.
+
+### 2. Computational Overload
+**Problem**: Running YOLOv8 for person detection alongside custom Roboflow models for multiple appliances (Light, Fan, Monitor) simultaneously maxed out CPU/GPU resources.
+**Solution**: We decoupled inference intervals. While person detection runs at high frequency for tracking, appliance status checks are performed every 20-30 frames. This optimized the resource footprint by nearly 60% with zero impact on energy waste detection.
+
+### 3. The "Static Occupant" Bug
+**Problem**: Traditional motion sensors (PIR) often fail if a person is sitting still (e.g., reading).
+**Solution**: By using YOLOv8 person-detection models rather than pixel-motion detection, CamSense.ai maintains "Occupied" status even for stationary subjects, preventing the "auto-lights-off" annoyance common in modern offices.
+
+### 4. Balancing Privacy with Monitoring
+**Problem**: Monitoring classrooms or offices can feel like intrusive surveillance.
+**Solution**: We developed a real-time anonymization layer. The system processes the raw frame for detection but immediately applies high-level pixelation/blurring to human subjects before the feed reaching the dashboard or being logged.
 
 ---
 
