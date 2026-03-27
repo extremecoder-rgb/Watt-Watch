@@ -4,7 +4,7 @@
 # Model settings
 model:
   name: "yolov8n.pt"  # nano model for massive speedup
-  confidence_threshold: 0.55
+  confidence_threshold: 0.25
   person_class_id: 0
 
 # Device settings
@@ -24,7 +24,7 @@ detection:
   # Process every N frames (1 = all frames, 2 = every other, etc.)
   frame_skip: 1
   # Minimum confidence for person detection
-  min_confidence: 0.55
+  min_confidence: 0.25
 
 # Tracking settings
 tracking:
@@ -116,3 +116,16 @@ alerts:
     events_file: "output/waste_events.json"
     thumbnails_dir: "data/alerts"
     thumbnail_width: 320
+  database:
+    enabled: true
+    db_path: "data/wattwatch.db"
+
+# Microzone Intelligence settings
+microzone:
+  enabled: true
+  rows: 4
+  cols: 4
+  # Heatmap decay (higher = longer trail)
+  decay: 0.98
+  # Potential energy savings from row-wise control (multiplier)
+  energy_savings_factor: 0.25 # Each row can save up to 25% of its total load if empty

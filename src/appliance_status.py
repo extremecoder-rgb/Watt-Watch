@@ -304,7 +304,11 @@ class ApplianceStatusRecognizer:
             if conf > highest_conf:
                 highest_conf = conf
                 detected_class = class_name
-                bbox = pred.get("bbox", pred.get("x", []))
+                # Roboflow returns x, y, width, height (center coords)
+                if "x" in pred and "width" in pred:
+                    bbox = [pred["x"], pred["y"], pred["width"], pred["height"]]
+                else:
+                    bbox = pred.get("bbox", [])
         
         # Improved parsing for light status
         status = Status.OFF
@@ -368,7 +372,11 @@ class ApplianceStatusRecognizer:
             if conf > highest_conf:
                 highest_conf = conf
                 detected_class = class_name
-                bbox = pred.get("bbox", pred.get("x", []))
+                # Roboflow returns x, y, width, height (center coords)
+                if "x" in pred and "width" in pred:
+                    bbox = [pred["x"], pred["y"], pred["width"], pred["height"]]
+                else:
+                    bbox = pred.get("bbox", [])
         
         # Improved parsing for fan status
         status = Status.OFF
@@ -412,7 +420,11 @@ class ApplianceStatusRecognizer:
             if conf > highest_conf:
                 highest_conf = conf
                 detected_class = class_name
-                bbox = pred.get("bbox", pred.get("x", []))
+                # Roboflow returns x, y, width, height (center coords)
+                if "x" in pred and "width" in pred:
+                    bbox = [pred["x"], pred["y"], pred["width"], pred["height"]]
+                else:
+                    bbox = pred.get("bbox", [])
         
         # Determine status
         status = Status.OFF

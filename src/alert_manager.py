@@ -1,6 +1,7 @@
 """
 Alert Manager for waste detection.
 Handles debouncing, event logging, and thumbnails.
+Uses SQLite database for concurrent write scalability.
 """
 
 import json
@@ -16,6 +17,8 @@ try:
     from twilio.rest import Client as TwilioClient
 except ImportError:
     TwilioClient = None
+
+from src.database import DatabaseManager, DatabaseConfig, WasteEvent as DBWasteEvent
 
 
 @dataclass
@@ -76,30 +79,81 @@ class AlertManager:
         
         # Load existing events
         self._events: List[WasteEvent] = []
-        if self.storage_enabled:
-            self._load_events()
-            os.makedirs(self.thumbnails_dir, exist_ok=True)
-            os.makedirs(os.path.dirname(self.events_file) if '/' in self.events_file else 'output', exist_ok=True)
+        
+        db_config = config.get("database", {})
+        self._use_database = db_config.get("enabled", True)
+        self._db_path = db_config.get("db_path", "data/wattwatch.db")
+        
+        self._db: Optional[DatabaseManager] = None
+        if self.storage_enabled and self._use_database:
+            self._init_database()
+        
+        os.makedirs(self.thumbnails_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self.events_file) if '/' in self.events_file else 'output', exist_ok=True)
     
-    def _load_events(self):
-        """Load existing events from file."""
-        if os.path.exists(self.events_file):
-            try:
-                with open(self.events_file, 'r') as f:
-                    data = json.load(f)
-                    for e in data.get('events', []):
-                        self._events.append(WasteEvent(**e))
-            except Exception:
-                pass
+    def _init_database(self):
+        """Initialize database connection."""
+        try:
+            db_config = DatabaseConfig(db_path=self._db_path)
+            self._db = DatabaseManager.get_instance(db_config)
+            self._db.start_buffer_flush()
+            self._load_events_from_db()
+            print(f"[AlertManager] Database initialized: {self._db_path}")
+        except Exception as e:
+            print(f"[AlertManager] Database init error: {e}, falling back to JSON")
+            self._use_database = False
+    
+    def _load_events_from_db(self):
+        """Load existing events from database."""
+        if not self._db:
+            return
+        try:
+            rows = self._db.fetchall(
+                "SELECT * FROM waste_events ORDER BY timestamp DESC LIMIT 1000"
+            )
+            for row in rows:
+                self._events.append(WasteEvent(
+                    event_id=row['event_id'],
+                    room_id=row['room_id'],
+                    room_name=row.get('room_name', ''),
+                    timestamp=row['timestamp'],
+                    duration_seconds=row.get('duration_seconds', 0),
+                    light_status=row.get('light_status', 'OFF'),
+                    fan_status=row.get('fan_status', 'OFF'),
+                    monitor_status=row.get('monitor_status', 'OFF'),
+                    thumbnail_path=row.get('thumbnail_path')
+                ))
+        except Exception as e:
+            print(f"[AlertManager] Load events error: {e}")
+    
+    def _save_events_to_db(self, event: WasteEvent):
+        """Save event to database."""
+        if not self._db:
+            return
+        try:
+            self._db.execute(
+                """INSERT OR REPLACE INTO waste_events 
+                (event_id, room_id, room_name, timestamp, duration_seconds, 
+                 light_status, fan_status, monitor_status, thumbnail_path, anonymized)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                (event.event_id, event.room_id, event.room_name, event.timestamp,
+                 event.duration_seconds, event.light_status, event.fan_status,
+                 event.monitor_status, event.thumbnail_path)
+            )
+        except Exception as e:
+            print(f"[AlertManager] Save event error: {e}")
     
     def _save_events(self):
-        """Save events to file."""
+        """Save events to file (fallback)."""
         if not self.storage_enabled:
+            return
+        
+        if self._use_database and self._db:
             return
         
         try:
             data = {
-                'events': [asdict(e) for e in self._events[-1000:]],  # Keep last 1000
+                'events': [asdict(e) for e in self._events[-1000:]],
                 'last_updated': time.time()
             }
             with open(self.events_file, 'w') as f:
@@ -252,6 +306,7 @@ class AlertManager:
                     
                     self._events.append(event)
                     self._save_events()
+                    self._save_events_to_db(event)
                     
                     # Send multi-channel alerts (SMS, WhatsApp, etc.)
                     self._send_sms(event)
