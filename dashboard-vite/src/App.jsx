@@ -287,7 +287,7 @@ function App() {
         </div>
         <div className="metrics-stack">
           <div className="m-row"><span className="l">LOAD</span><span className="v">{estimatedWatts}W</span></div>
-          <div className={`m-row waste ${cumulativeCost > 0 ? 'active' : ''}`}><span className="l">CUMULATIVE_WASTE</span><span className="v">${cumulativeCost.toFixed(4)}</span></div>
+          <div className={`m-row waste ${cumulativeCost > 0 ? 'active' : ''}`}><span className="l">CUMULATIVE_WASTE</span><span className="v">₹{cumulativeCost.toFixed(4)}</span></div>
         </div>
       </div>
     )
@@ -506,7 +506,7 @@ function App() {
                 <h4 className="card-title">◈ LAST_30_DAYS</h4>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginTop: '12px' }}>
                   <div><span className="l">ENERGY_SAVED</span><span className="v">{energyDashboard.total_energy_saved_kwh || 0} kWh</span></div>
-                  <div><span className="l">COST_(USD)</span><span className="v">${energyDashboard.total_cost_saved_usd || 0}</span></div>
+                  <div><span className="l">COST_(INR)</span><span className="v">₹{energyDashboard.total_cost_saved_inr || 0}</span></div>
                   <div><span className="l">COST_(INR)</span><span className="v">₹{energyDashboard.total_cost_saved_inr || 0}</span></div>
                   <div><span className="l">CO2_SAVED</span><span className="v">{energyDashboard.total_co2_saved_kg || 0} kg</span></div>
                 </div>
@@ -540,7 +540,7 @@ function App() {
             <div className="glass-card">
               <h4 className="card-title">◈ CONFIG</h4>
               <div style={{ fontSize: '11px', lineHeight: '1.8' }}>
-                <p><span style={{ opacity: 0.6 }}>Rate (USD):</span> ${energyDashboard.config?.electricity_rate_usd || 0.12}/kWh</p>
+                <p><span style={{ opacity: 0.6 }}>Rate (INR):</span> ₹{energyDashboard.config?.electricity_rate_inr || 6.50}/kWh</p>
                 <p><span style={{ opacity: 0.6 }}>Rate (INR):</span> ₹{energyDashboard.config?.electricity_rate_inr || 6.50}/kWh</p>
                 <p><span style={{ opacity: 0.6 }}>CO₂ Factor:</span> {energyDashboard.config?.co2_factor_kg_per_kwh || 0.71} kg/kWh</p>
                 <hr style={{ borderColor: 'rgba(255,255,255,0.1)', margin: '12px 0' }} />

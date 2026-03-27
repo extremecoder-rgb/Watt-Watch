@@ -146,6 +146,6 @@ class ExportRow:
             "Fan Status",
             "Monitor Status",
             "Est. Energy Saved (kWh)",
-            "Cost Saved ($)",
+            "Cost Saved (INR)",
             "Anonymized Thumbnail"
         ]

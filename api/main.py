@@ -1230,7 +1230,7 @@ async def export_logs_csv(
     writer.writerow([
         "Timestamp", "Room ID", "Room Name", "Duration (minutes)",
         "Light Status", "Fan Status", "Monitor Status",
-        "Est. Energy Saved (kWh)", "Cost Saved ($)", "Anonymized Thumbnail"
+        "Est. Energy Saved (kWh)", "Cost Saved (INR)", "Anonymized Thumbnail"
     ])
     
     for e in events:
@@ -1558,7 +1558,6 @@ async def get_energy_dashboard():
     
     appliance_config = config.get("appliance", {})
     watt_config = appliance_config.get("wattage", {})
-    electricity_rate_usd = appliance_config.get("electricity_rate", 0.12)
     electricity_rate_inr = appliance_config.get("electricity_rate_inr", 6.50)
     co2_factor = appliance_config.get("co2_factor_kg_per_kwh", 0.71)
     
@@ -1574,7 +1573,6 @@ async def get_energy_dashboard():
         "period_days": days,
         "total_waste_duration_hours": 0,
         "total_energy_saved_kwh": 0,
-        "total_cost_saved_usd": 0,
         "total_cost_saved_inr": 0,
         "total_co2_saved_kg": 0,
         "rooms": {}
@@ -1597,14 +1595,12 @@ async def get_energy_dashboard():
             alerts = row["alert_count"]
             
             kwh = (total_potential_watts / 1000) * duration_hours
-            cost_usd = kwh * electricity_rate_usd
             cost_inr = kwh * electricity_rate_inr
             co2_saved = kwh * co2_factor
             
             summary["rooms"][rid] = {
                 "waste_duration_hours": round(duration_hours, 2),
                 "energy_saved_kwh": round(kwh, 2),
-                "cost_saved_usd": round(cost_usd, 2),
                 "cost_saved_inr": round(cost_inr, 2),
                 "co2_saved_kg": round(co2_saved, 2),
                 "alerts": alerts,
@@ -1615,7 +1611,6 @@ async def get_energy_dashboard():
             
             summary["total_waste_duration_hours"] += duration_hours
             summary["total_energy_saved_kwh"] += kwh
-            summary["total_cost_saved_usd"] += cost_usd
             summary["total_cost_saved_inr"] += cost_inr
             summary["total_co2_saved_kg"] += co2_saved
     else:
@@ -1638,7 +1633,6 @@ async def get_energy_dashboard():
                     duration_hours = e.get("duration_seconds", 0) / 3600
                     
                     kwh = (total_potential_watts / 1000) * duration_hours
-                    cost_usd = kwh * electricity_rate_usd
                     cost_inr = kwh * electricity_rate_inr
                     co2_saved = kwh * co2_factor
                     
@@ -1646,7 +1640,6 @@ async def get_energy_dashboard():
                         summary["rooms"][rid] = {
                             "waste_duration_hours": 0,
                             "energy_saved_kwh": 0,
-                            "cost_saved_usd": 0,
                             "cost_saved_inr": 0,
                             "co2_saved_kg": 0,
                             "alerts": 0,
@@ -1657,14 +1650,12 @@ async def get_energy_dashboard():
                     
                     summary["rooms"][rid]["waste_duration_hours"] += duration_hours
                     summary["rooms"][rid]["energy_saved_kwh"] += kwh
-                    summary["rooms"][rid]["cost_saved_usd"] += cost_usd
                     summary["rooms"][rid]["cost_saved_inr"] += cost_inr
                     summary["rooms"][rid]["co2_saved_kg"] += co2_saved
                     summary["rooms"][rid]["alerts"] += 1
                     
                     summary["total_waste_duration_hours"] += duration_hours
                     summary["total_energy_saved_kwh"] += kwh
-                    summary["total_cost_saved_usd"] += cost_usd
                     summary["total_cost_saved_inr"] += cost_inr
                     summary["total_co2_saved_kg"] += co2_saved
             except:
@@ -1673,7 +1664,6 @@ async def get_energy_dashboard():
     # Calculate totals
     summary["total_waste_duration_hours"] = round(summary["total_waste_duration_hours"], 2)
     summary["total_energy_saved_kwh"] = round(summary["total_energy_saved_kwh"], 2)
-    summary["total_cost_saved_usd"] = round(summary["total_cost_saved_usd"], 2)
     summary["total_cost_saved_inr"] = round(summary["total_cost_saved_inr"], 2)
     summary["total_co2_saved_kg"] = round(summary["total_co2_saved_kg"], 2)
     
@@ -1681,7 +1671,6 @@ async def get_energy_dashboard():
     summary["projections"] = {
         "kwh_per_day": round(summary["total_energy_saved_kwh"] / days, 3),
         "inr_per_year": round((summary["total_energy_saved_kwh"] / days) * 365 * electricity_rate_inr, 0),
-        "usd_per_year": round((summary["total_energy_saved_kwh"] / days) * 365 * electricity_rate_usd, 2),
         "co2_per_year_kg": round((summary["total_energy_saved_kwh"] / days) * 365 * co2_factor, 1),
         "co2_per_year_tons": round((summary["total_energy_saved_kwh"] / days) * 365 * co2_factor / 1000, 2)
     }
@@ -1695,7 +1684,6 @@ async def get_energy_dashboard():
         r["co2_per_year_kg"] = round((r_kwh / days) * 365 * co2_factor, 1)
     
     summary["config"] = {
-        "electricity_rate_usd": electricity_rate_usd,
         "electricity_rate_inr": electricity_rate_inr,
         "co2_factor_kg_per_kwh": co2_factor,
         "total_appliance_watts": total_potential_watts,
