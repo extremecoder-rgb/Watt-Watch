@@ -50,6 +50,7 @@ class FrameResult:
     detections: List[Dict[str, Any]]
     light_status: str
     fan_status: str
+    monitor_status: str
     image_width: int
     image_height: int
     processing_time_ms: float
@@ -156,6 +157,7 @@ class RoomData:
     person_count: int
     light_status: str
     fan_status: str
+    monitor_status: str
     status: str
     last_update: float
     energy_saved: float = 0.0
@@ -177,6 +179,7 @@ class MultiRoomDetector:
         # Appliance status cache (updated by background thread)
         self._last_light_status = Status.OFF
         self._last_fan_status = Status.OFF
+        self._last_monitor_status = Status.OFF
         # Background appliance detection
         self._latest_appliance_frame = None
         self._latest_result = None
@@ -265,6 +268,8 @@ class MultiRoomDetector:
                             self._last_light_status = r.status
                         elif r.appliance_type == ApplianceType.CEILING_FAN:
                             self._last_fan_status = r.status
+                        elif r.appliance_type == ApplianceType.MONITOR:
+                            self._last_monitor_status = r.status
             except Exception as e:
                 print(f"[BG Appliance] Error: {e}")
     
@@ -286,6 +291,7 @@ class MultiRoomDetector:
                 person_count=0,
                 light_status="OFF",
                 fan_status="OFF",
+                monitor_status="OFF",
                 status="secure",
                 last_update=time.time()
             )
@@ -382,18 +388,20 @@ class MultiRoomDetector:
         with self._lock:
             light_status = self._last_light_status.value
             fan_status = self._last_fan_status.value
+            monitor_status = self._last_monitor_status.value
 
         # Feed frame to background appliance detector
         if self.appliance_recognizer and self._latest_appliance_frame is not None:
             pass  # background thread picks it up
 
         # Update room data
-        room_status = "waste" if (person_count == 0 and (light_status == "ON" or fan_status == "ON")) else "secure"
+        room_status = "waste" if (person_count == 0 and (light_status == "ON" or fan_status == "ON" or monitor_status == "ON")) else "secure"
 
         if room:
             room.person_count = person_count
             room.light_status = light_status
             room.fan_status = fan_status
+            room.monitor_status = monitor_status
             room.status = room_status
             room.last_update = time.time()
 
@@ -408,6 +416,7 @@ class MultiRoomDetector:
             detections=detections,
             light_status=light_status,
             fan_status=fan_status,
+            monitor_status=monitor_status,
             image_width=width,
             image_height=height,
             processing_time_ms=processing_time
@@ -544,6 +553,7 @@ async def get_status():
                 "person_count": room.person_count,
                 "light_status": room.light_status,
                 "fan_status": room.fan_status,
+                "monitor_status": room.monitor_status,
                 "status": room.status,
                 "last_update": room.last_update
             }
@@ -572,6 +582,7 @@ async def get_rooms():
             "person_count": room.person_count,
             "light_status": room.light_status,
             "fan_status": room.fan_status,
+            "monitor_status": room.monitor_status,
             "status": room.status,
             "last_update": room.last_update
         }
@@ -619,6 +630,7 @@ async def get_alert_events(limit: int = 10):
                 "duration_seconds": e.duration_seconds,
                 "light_status": e.light_status,
                 "fan_status": e.fan_status,
+                "monitor_status": e.monitor_status,
                 "thumbnail_path": e.thumbnail_path
             }
             for e in events
@@ -645,7 +657,8 @@ async def get_alerts_status():
             "status": room.status,
             "waste_duration_seconds": duration,
             "light_status": room.light_status,
-            "fan_status": room.fan_status
+            "fan_status": room.fan_status,
+            "monitor_status": room.monitor_status
         }
     
     return {
@@ -675,7 +688,8 @@ async def get_energy_metrics():
         # Calculate wattage based on actual appliance status
         light_watts = wattage.get("light", 40) if room.light_status == "ON" else 0
         fan_watts = wattage.get("ceiling_fan", 65) if room.fan_status == "ON" else 0
-        estimated_watts = light_watts + fan_watts
+        monitor_watts = wattage.get("monitor", 35) if room.monitor_status == "ON" else 0
+        estimated_watts = light_watts + fan_watts + monitor_watts
         
         # Calculate cost per hour
         cost_per_hour = (estimated_watts / 1000) * electricity_rate
@@ -694,8 +708,10 @@ async def get_energy_metrics():
             "person_count": room.person_count,
             "light_status": room.light_status,
             "fan_status": room.fan_status,
+            "monitor_status": room.monitor_status,
             "light_watts": light_watts,
             "fan_watts": fan_watts,
+            "monitor_watts": monitor_watts,
             "estimated_watts": estimated_watts,
             "cost_per_hour": round(cost_per_hour, 4),
             "waste_duration_seconds": round(waste_duration, 1),
@@ -727,6 +743,7 @@ async def websocket_stream(websocket: WebSocket):
     cached_detections = []
     cached_light = "OFF"
     cached_fan = "OFF"
+    cached_monitor = "OFF"
 
     try:
         while True:
@@ -787,16 +804,19 @@ async def websocket_stream(websocket: WebSocket):
                 with detector._lock:
                     light_status = detector._last_light_status.value
                     fan_status = detector._last_fan_status.value
+                    monitor_status = detector._last_monitor_status.value
                     cached_light = light_status
                     cached_fan = fan_status
+                    cached_monitor = monitor_status
 
                 # Update room data
                 room = detector._rooms.get("room-101")
-                room_status = "waste" if (person_count == 0 and (light_status == "ON" or fan_status == "ON")) else "secure"
+                room_status = "waste" if (person_count == 0 and (light_status == "ON" or fan_status == "ON" or monitor_status == "ON")) else "secure"
                 if room:
                     room.person_count = person_count
                     room.light_status = light_status
                     room.fan_status = fan_status
+                    room.monitor_status = monitor_status
                     room.status = room_status
                     room.last_update = time.time()
 
@@ -808,12 +828,14 @@ async def websocket_stream(websocket: WebSocket):
                 detections = cached_detections
                 light_status = cached_light
                 fan_status = cached_fan
+                monitor_status = cached_monitor
                 
                 room = detector._rooms.get("room-101") if detector else None
                 if room:
                     room.person_count = person_count
                     room.light_status = light_status
                     room.fan_status = fan_status
+                    room.monitor_status = monitor_status
 
             # Extract person bboxes for privacy filter
             person_bboxes = [d["bbox"] for d in detections if d.get("bbox")]
@@ -842,6 +864,7 @@ async def websocket_stream(websocket: WebSocket):
                         person_count=person_count,
                         light_status=room.light_status,
                         fan_status=room.fan_status,
+                        monitor_status=room.monitor_status,
                         anonymized_frame=anonymized_frame
                     )
                     if alert_event:
@@ -871,6 +894,7 @@ async def websocket_stream(websocket: WebSocket):
                 "detections": detections,
                 "light_status": light_status,
                 "fan_status": fan_status,
+                "monitor_status": monitor_status,
                 "processing_time_ms": processing_time,
                 "privacy_enabled": detector.privacy_enabled if detector else False,
                 "frame": f"data:image/jpeg;base64,{frame_base64}",
@@ -919,6 +943,7 @@ async def websocket_detections(websocket: WebSocket):
                     "detections": result.detections,
                     "light_status": result.light_status,
                     "fan_status": result.fan_status,
+                    "monitor_status": result.monitor_status,
                     "processing_time_ms": result.processing_time_ms
                 }
                 

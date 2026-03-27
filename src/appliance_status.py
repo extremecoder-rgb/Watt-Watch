@@ -25,6 +25,7 @@ class ApplianceType(Enum):
     """Supported appliance types."""
     LIGHT = "light"
     CEILING_FAN = "ceiling_fan"
+    MONITOR = "monitor"
     UNKNOWN = "unknown"
 
 
@@ -138,6 +139,7 @@ class ApplianceStatusRecognizer:
     
     LIGHT_MODEL_ID = "coms-room-light-63vyv/1"
     CEILING_FAN_MODEL_ID = "ceiling-fan-detection-epfsk/1"
+    MONITOR_MODEL_ID = "monitor_detection-uj19t-zqnlq/1"
     
     def __init__(self, use_temp_files: bool = True):
         """
@@ -196,9 +198,36 @@ class ApplianceStatusRecognizer:
             return self._parse_ceiling_fan_predictions(predictions)
             
         except Exception as e:
-            _log(f"FAN ERROR: {e}")
             return ApplianceStatusResult(
                 appliance_type=ApplianceType.CEILING_FAN,
+                status=Status.UNKNOWN,
+                confidence=0.0,
+                model_predictions={"error": str(e)}
+            )
+            
+    def detect_monitor_status(self, frame: np.ndarray) -> ApplianceStatusResult:
+        """
+        Detect monitor ON/OFF status.
+        
+        Args:
+            frame: Video frame as numpy array
+            
+        Returns:
+            ApplianceStatusResult with monitor status
+        """
+        try:
+            if self._use_temp_files:
+                predictions = self._client.infer_frame(frame, self.MONITOR_MODEL_ID)
+            else:
+                raise ValueError("Direct frame inference requires temp files")
+            
+            _log(f"MONITOR RAW PREDICTIONS: {predictions}")
+            return self._parse_monitor_predictions(predictions)
+            
+        except Exception as e:
+            _log(f"MONITOR ERROR: {e}")
+            return ApplianceStatusResult(
+                appliance_type=ApplianceType.MONITOR,
                 status=Status.UNKNOWN,
                 confidence=0.0,
                 model_predictions={"error": str(e)}
@@ -214,15 +243,17 @@ class ApplianceStatusRecognizer:
         Returns:
             List of ApplianceStatusResult for each appliance type
         """
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_light = executor.submit(self.detect_light_status, frame)
             future_fan = executor.submit(self.detect_ceiling_fan_status, frame)
+            future_monitor = executor.submit(self.detect_monitor_status, frame)
             
-            # Wait for both results
+            # Wait for all results
             light_result = future_light.result()
             fan_result = future_fan.result()
+            monitor_result = future_monitor.result()
             
-        return [light_result, fan_result]
+        return [light_result, fan_result, monitor_result]
     
     def _parse_light_predictions(self, predictions: Dict[str, Any]) -> ApplianceStatusResult:
         """
@@ -349,6 +380,50 @@ class ApplianceStatusRecognizer:
         
         return ApplianceStatusResult(
             appliance_type=ApplianceType.CEILING_FAN,
+            status=status,
+            confidence=highest_conf,
+            bounding_box=bbox,
+            model_predictions=predictions_dict
+        )
+        
+    def _parse_monitor_predictions(self, predictions: Dict[str, Any]) -> ApplianceStatusResult:
+        """Parse Roboflow predictions for monitor detection."""
+        predictions_dict = predictions if isinstance(predictions, dict) else {}
+        predictions_list = predictions_dict.get("predictions", [])
+        
+        _log(f"MONITOR API RESPONSE: {predictions_dict}")
+        
+        if not predictions_list:
+            return ApplianceStatusResult(
+                appliance_type=ApplianceType.MONITOR,
+                status=Status.OFF,
+                confidence=0.0,
+                model_predictions=predictions_dict
+            )
+        
+        highest_conf = 0.0
+        detected_class = "unknown"
+        bbox = None
+        
+        for pred in predictions_list:
+            conf = pred.get("confidence", 0.0)
+            class_name = pred.get("class", pred.get("class_name", "")).lower()
+            
+            if conf > highest_conf:
+                highest_conf = conf
+                detected_class = class_name
+                bbox = pred.get("bbox", pred.get("x", []))
+        
+        # Determine status
+        status = Status.OFF
+        if any(token in detected_class for token in ["on", "active", "display", "monitor", "screen", "power"]):
+            if "off" not in detected_class:
+                status = Status.ON
+            else:
+                status = Status.OFF
+        
+        return ApplianceStatusResult(
+            appliance_type=ApplianceType.MONITOR,
             status=status,
             confidence=highest_conf,
             bounding_box=bbox,

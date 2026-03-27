@@ -27,6 +27,7 @@ class WasteEvent:
     duration_seconds: float
     light_status: str
     fan_status: str
+    monitor_status: str
     thumbnail_path: Optional[str] = None
 
 
@@ -136,7 +137,7 @@ class AlertManager:
                 f"⚠️ WATTWATCH ALERT\n"
                 f"Energy waste detected in {event.room_name}!\n"
                 f"Duration: {event.duration_seconds/60:.1f} mins\n"
-                f"Lights: {event.light_status}, Fans: {event.fan_status}\n"
+                f"Lights: {event.light_status}, Fans: {event.fan_status}, Mon: {event.monitor_status}\n"
                 f"Please check the facility."
             )
             
@@ -180,6 +181,7 @@ class AlertManager:
         person_count: int,
         light_status: str,
         fan_status: str,
+        monitor_status: str = "OFF",
         current_frame: Optional[np.ndarray] = None,
         anonymized_frame: Optional[np.ndarray] = None
     ) -> Optional[WasteEvent]:
@@ -190,7 +192,7 @@ class AlertManager:
         if not self.enabled:
             return None
         
-        is_waste = person_count == 0 and (light_status == "ON" or fan_status == "ON")
+        is_waste = person_count == 0 and (light_status == "ON" or fan_status == "ON" or monitor_status == "ON")
         current_time = time.time()
         
         with self._lock:
@@ -201,13 +203,15 @@ class AlertManager:
                     'last_alert_time': None,
                     'room_name': room_name,
                     'light_status': light_status,
-                    'fan_status': fan_status
+                    'fan_status': fan_status,
+                    'monitor_status': monitor_status
                 }
             
             state = self._room_states[room_id]
             state['room_name'] = room_name
             state['light_status'] = light_status
             state['fan_status'] = fan_status
+            state['monitor_status'] = monitor_status
             
             if is_waste:
                 if not state['in_waste']:
@@ -242,6 +246,7 @@ class AlertManager:
                         duration_seconds=waste_duration,
                         light_status=light_status,
                         fan_status=fan_status,
+                        monitor_status=monitor_status,
                         thumbnail_path=thumb_path
                     )
                     

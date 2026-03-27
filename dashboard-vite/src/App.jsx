@@ -16,6 +16,7 @@ function App() {
   const [personCount, setPersonCount] = useState(0)
   const [lightStatus, setLightStatus] = useState('OFF')
   const [fanStatus, setFanStatus] = useState('OFF')
+  const [monitorStatus, setMonitorStatus] = useState('OFF')
   const [roomStatus, setRoomStatus] = useState('secure')
   const [processingTime, setProcessingTime] = useState(0)
   
@@ -128,9 +129,10 @@ function App() {
           setPersonCount(data.person_count)
           setLightStatus(data.light_status)
           setFanStatus(data.fan_status)
+          setMonitorStatus(data.monitor_status || 'OFF')
           setProcessingTime(data.processing_time_ms)
           
-          const isWaste = data.person_count === 0 && (data.light_status === 'ON' || data.fan_status === 'ON')
+          const isWaste = data.person_count === 0 && (data.light_status === 'ON' || data.fan_status === 'ON' || data.monitor_status === 'ON')
           setRoomStatus(isWaste ? 'waste' : 'secure')
           
           fpsCounter.current.count++
@@ -171,11 +173,13 @@ function App() {
       setPersonCount(0)
       setLightStatus('ON')
       setFanStatus('ON')
+      setMonitorStatus('ON')
       setRoomStatus('waste')
     } else {
       setPersonCount(Math.floor(Math.random() * 5) + 1)
       setLightStatus('OFF')
       setFanStatus('ON')
+      setMonitorStatus('OFF')
       setRoomStatus('secure')
     }
     
@@ -184,11 +188,13 @@ function App() {
         setPersonCount(0)
         setLightStatus('ON')
         setFanStatus('ON')
+        setMonitorStatus('ON')
         setRoomStatus('waste')
       } else {
         setPersonCount(Math.floor(Math.random() * 5) + 1)
         setLightStatus('OFF')
         setFanStatus('ON')
+        setMonitorStatus('OFF')
         setRoomStatus('secure')
       }
       setFps(Math.floor(Math.random() * 5) + 25)
@@ -202,6 +208,7 @@ function App() {
     setPersonCount(0)
     setLightStatus('OFF')
     setFanStatus('OFF')
+    setMonitorStatus('OFF')
     setRoomStatus('secure')
   }
 
@@ -210,7 +217,7 @@ function App() {
   // Use real data from API when connected, fallback to simplified calculation
   const estimatedWatts = connected && energyMetrics.estimated_watts 
     ? energyMetrics.estimated_watts 
-    : (lightStatus === 'ON' ? 40 : 0) + (fanStatus === 'ON' ? 65 : 0)
+    : (lightStatus === 'ON' ? 40 : 0) + (fanStatus === 'ON' ? 65 : 0) + (monitorStatus === 'ON' ? 35 : 0)
     
   const costPerHour = connected && energyMetrics.cost_per_hour 
     ? energyMetrics.cost_per_hour 
@@ -361,8 +368,12 @@ function App() {
                 <span className={`status-value ${fanStatus === 'ON' ? 'on' : 'off'}`}>{fanStatus}</span>
               </div>
               <div className="status-item">
+                <span className="status-label">DISPLAY_UNIT</span>
+                <span className={`status-value ${monitorStatus === 'ON' ? 'on' : 'off'}`}>{monitorStatus}</span>
+              </div>
+              <div className="status-item" style={{gridColumn: 'span 2'}}>
                 <span className="status-label">THREAT_LEVEL</span>
-                <span className={`status-value ${roomStatus}`}>{roomStatus === 'waste' ? 'CRITICAL' : 'ZERO'}</span>
+                <span className={`status-value ${roomStatus}`} style={{fontSize: '1.2rem'}}>{roomStatus === 'waste' ? 'CRITICAL' : 'ZERO'}</span>
               </div>
             </div>
           </div>
