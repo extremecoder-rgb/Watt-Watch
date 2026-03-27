@@ -11,6 +11,7 @@ function App() {
   const [runningTime, setRunningTime] = useState(0)
   const [fps, setFps] = useState(0)
   const [frame, setFrame] = useState(null)
+  const [rawFrame, setRawFrame] = useState(null)
   
   const [personCount, setPersonCount] = useState(0)
   const [lightStatus, setLightStatus] = useState('OFF')
@@ -20,6 +21,9 @@ function App() {
   
   const [wasteDetected, setWasteDetected] = useState(0)
   const [demoMode, setDemoMode] = useState(false)
+  
+  const [privacyEnabled, setPrivacyEnabled] = useState(true)
+  const [showRaw, setShowRaw] = useState(false)
   
   const wsRef = useRef(null)
   const fpsCounter = useRef({ count: 0, lastTime: Date.now() })
@@ -78,6 +82,12 @@ function App() {
           if (data.frame) {
             setFrame(data.frame)
             frameRef.current = data.frame
+          }
+          if (data.raw_frame) {
+            setRawFrame(data.raw_frame)
+          }
+          if (data.privacy_enabled !== undefined) {
+            setPrivacyEnabled(data.privacy_enabled)
           }
           
           setPersonCount(data.person_count)
@@ -209,6 +219,41 @@ function App() {
         </div>
         
         <div className="demo-controls">
+          {connected && (
+            <div className="privacy-toggle">
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={privacyEnabled}
+                  onChange={async (e) => {
+                    const enabled = e.target.checked
+                    setPrivacyEnabled(enabled)
+                    try {
+                      await fetch(`${API_URL}/api/privacy/toggle`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(enabled)
+                      })
+                    } catch (err) {
+                      console.error('Failed to toggle privacy:', err)
+                    }
+                  }}
+                />
+                <span className="toggle-switch"></span>
+                <span>🔒 Privacy Mode {privacyEnabled ? 'ON' : 'OFF'}</span>
+              </label>
+              {privacyEnabled && (
+                <label className="toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={showRaw}
+                    onChange={(e) => setShowRaw(e.target.checked)}
+                  />
+                  <span>Show Raw</span>
+                </label>
+              )}
+            </div>
+          )}
           <button className="btn btn-demo" onClick={() => startDemo('empty-room-appliances-on')}>
             ▶ Demo: Empty + Appliances ON
           </button>
@@ -227,7 +272,19 @@ function App() {
         <div className="video-section">
           <div className="video-container">
             {connected || demoMode ? (
-              <img id="video-frame" src={frame} alt="Live Feed" />
+              <div className="frame-display">
+                <img 
+                  id="video-frame" 
+                  src={showRaw && rawFrame ? rawFrame : frame} 
+                  alt="Live Feed" 
+                />
+                {privacyEnabled && !showRaw && (
+                  <div className="privacy-badge">🔒 Anonymized</div>
+                )}
+                {showRaw && (
+                  <div className="raw-badge">⚠️ Raw Feed</div>
+                )}
+              </div>
             ) : (
               <div className="no-feed">
                 <div className="no-feed-icon">📹</div>

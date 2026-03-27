@@ -1,6 +1,7 @@
 """
 WattWatch Real-time API Server
 Connects to IP webcam and provides real-time detection results via WebSocket.
+Supports privacy-first ghost mode for face anonymization.
 """
 
 import asyncio
@@ -10,6 +11,8 @@ import base64
 import sys
 import os
 from pathlib import Path
+import time
+import json
 
 # Add project root to sys.path
 root_dir = str(Path(__file__).resolve().parent.parent)
@@ -18,7 +21,6 @@ if root_dir not in sys.path:
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 import threading
-import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -166,6 +168,8 @@ class MultiRoomDetector:
         self.config = config
         self.person_detector = None
         self.appliance_recognizer = None
+        self.privacy_filter = None
+        self.privacy_enabled = False
         self._frame_count = 0
         self._rooms: Dict[str, RoomData] = {}
         self._load_models()
@@ -180,6 +184,21 @@ class MultiRoomDetector:
         self._appliance_frame_event = threading.Event()
         self._lock = threading.Lock()
         self._appliance_thread = None
+        
+        # Privacy storage settings
+        privacy_config = config.get("privacy", {})
+        storage_config = privacy_config.get("storage", {})
+        self._save_raw = storage_config.get("save_raw", True)
+        self._save_anon = storage_config.get("save_anonymized", True)
+        self._save_every_n = storage_config.get("save_every_n_frames", 10)
+        self._raw_dir = os.path.join(root_dir, storage_config.get("raw_dir", "data/raw"))
+        self._anon_dir = os.path.join(root_dir, storage_config.get("anonymized_dir", "data/anonymized"))
+        
+        # Create directories
+        if self._save_raw:
+            os.makedirs(self._raw_dir, exist_ok=True)
+        if self._save_anon:
+            os.makedirs(self._anon_dir, exist_ok=True)
 
     def start_background_processing(self):
         """Start the background appliance detection thread."""
@@ -259,7 +278,7 @@ class MultiRoomDetector:
             )
     
     def _load_models(self):
-        """Load the YOLO and appliance detection models."""
+        """Load the YOLO, appliance detection, and privacy filter models."""
         from src.detector import YOLODetector
         
         # Load YOLO for person detection
@@ -280,6 +299,27 @@ class MultiRoomDetector:
         print("Loading YOLO model...")
         self.person_detector.load_model()
         print("YOLO model loaded")
+        
+        # Load privacy filter
+        privacy_config = self.config.get("privacy", {})
+        if privacy_config.get("enabled", True):
+            try:
+                from src.privacy_filter import PrivacyFilter
+                self.privacy_filter = PrivacyFilter(
+                    blur_method=privacy_config.get("blur_method", "solid"),
+                    blur_level=privacy_config.get("blur_level", 99),
+                    pixelate_blocks=privacy_config.get("pixelate_blocks", 4),
+                    skip_frames=privacy_config.get("skip_frames", 3)
+                )
+                self.privacy_enabled = True
+                print(f"Privacy filter loaded: {self.privacy_filter.get_config()}")
+            except Exception as e:
+                print(f"Warning: Could not load privacy filter: {e}")
+                self.privacy_filter = None
+                self.privacy_enabled = False
+        else:
+            self.privacy_filter = None
+            self.privacy_enabled = False
         
         # Load appliance recognizer
         if self.config.get("appliance", {}).get("enabled", False):
@@ -499,6 +539,7 @@ async def get_status():
         "running": app_state["running"],
         "camera_connected": app_state["capture"] is not None,
         "frame_count": app_state["detector"]._frame_count if app_state["detector"] else 0,
+        "privacy_enabled": app_state["detector"].privacy_enabled if app_state["detector"] else False,
         "rooms": rooms_data
     }
 
@@ -525,14 +566,44 @@ async def get_rooms():
     return {"rooms": rooms_data}
 
 
+@app.post("/api/privacy/toggle")
+async def toggle_privacy(enabled: bool):
+    """Toggle privacy mode on/off."""
+    if not app_state["detector"]:
+        raise HTTPException(status_code=400, detail="Detector not initialized")
+    
+    app_state["detector"].privacy_enabled = enabled
+    return {"privacy_enabled": enabled}
+
+
+@app.get("/api/privacy/status")
+async def get_privacy_status():
+    """Get current privacy mode status."""
+    if not app_state["detector"]:
+        return {"privacy_enabled": False, "available": False}
+    
+    return {
+        "privacy_enabled": app_state["detector"].privacy_enabled,
+        "privacy_available": app_state["detector"].privacy_filter is not None
+    }
+
+
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     """WebSocket endpoint for real-time video streaming."""
     await websocket.accept()
 
-    # Throttle appliance frame submission: only send every N frames
+    # Performance: process every frame but skip heavy ops periodically
     frame_counter = 0
-    APPLIANCE_SUBMIT_EVERY = 5  # submit a frame to BG appliance thread every 5 WS frames
+    APPLIANCE_SUBMIT_EVERY = 5
+    DETECTION_SKIP = 3  # Skip YOLO every N frames
+    JPEG_QUALITY = 50   # Lower for faster encoding
+    
+    # Cached state for skipping heavy processing
+    cached_person_count = 0
+    cached_detections = []
+    cached_light = "OFF"
+    cached_fan = "OFF"
 
     try:
         while True:
@@ -540,10 +611,10 @@ async def websocket_stream(websocket: WebSocket):
                 await asyncio.sleep(0.1)
                 continue
 
-            # Read frame
+            # Read frame (this is where most of the latency comes from - network)
             frame = app_state["capture"].read_frame()
             if frame is None:
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.01)
                 continue
 
             detector = app_state["detector"]
@@ -553,10 +624,13 @@ async def websocket_stream(websocket: WebSocket):
             processing_time = 0
             detections = []
 
-            if detector:
+            # Get cached values when skipping detection
+            use_cache = frame_counter % DETECTION_SKIP != 0
+            
+            if detector and not use_cache:
                 start = time.time()
 
-                # --- Fast path: person detection only (YOLO, local, no network) ---
+                # --- Person detection (YOLO) ---
                 h, w = frame.shape[:2]
                 proc_w = 640
                 proc_h = int(h * proc_w / w)
@@ -577,15 +651,21 @@ async def websocket_stream(websocket: WebSocket):
                     for d in person_dets
                 ]
 
-                # --- Submit frame to background appliance detector (non-blocking) ---
+                # Update cache
+                cached_person_count = person_count
+                cached_detections = detections
+                
+                # --- Submit frame to background appliance detector ---
                 frame_counter += 1
                 if frame_counter % APPLIANCE_SUBMIT_EVERY == 0:
                     detector.submit_appliance_frame(proc_frame)
 
-                # --- Read cached appliance status (instant, no network wait) ---
+                # --- Read cached appliance status ---
                 with detector._lock:
                     light_status = detector._last_light_status.value
                     fan_status = detector._last_fan_status.value
+                    cached_light = light_status
+                    cached_fan = fan_status
 
                 # Update room data
                 room = detector._rooms.get("room-101")
@@ -599,15 +679,52 @@ async def websocket_stream(websocket: WebSocket):
 
                 processing_time = (time.time() - start) * 1000
                 detector._frame_count += 1
+            else:
+                # Use cached values
+                person_count = cached_person_count
+                detections = cached_detections
+                light_status = cached_light
+                fan_status = cached_fan
+                
+                room = detector._rooms.get("room-101") if detector else None
+                if room:
+                    room.person_count = person_count
+                    room.light_status = light_status
+                    room.fan_status = fan_status
 
-            # Convert frame to JPEG for display
+            # Extract person bboxes for privacy filter
+            person_bboxes = [d["bbox"] for d in detections if d.get("bbox")]
+
+            # Apply privacy filter ONLY if people detected (skip if empty frame)
+            raw_frame = frame.copy()
+            anonymized_frame = frame.copy()
+            face_detections = []
+            
+            if detector and getattr(detector, "privacy_enabled", False) and detector.privacy_filter and person_count > 0:
+                try:
+                    anonymized_frame, face_detections = detector.privacy_filter.anonymize_frame(
+                        frame,
+                        person_bboxes=person_bboxes
+                    )
+                except Exception as e:
+                    pass
+
+            # Resize for display - smaller for faster transmission
             h, w = frame.shape[:2]
-            display_frame = frame
-            if w > 1280:
-                display_frame = cv2.resize(frame, (1280, int(h * 1280 / w)))
+            display_frame = anonymized_frame if detector and getattr(detector, "privacy_enabled", False) else frame
+            if w > 640:
+                display_frame = cv2.resize(display_frame, (640, int(h * 640 / w)))
+                raw_frame = cv2.resize(raw_frame, (640, int(h * 640 / w)))
 
-            _, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+            # Encode with lower quality for speed
+            _, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             frame_base64 = base64.b64encode(buffer).decode('utf-8')
+
+            # Only send raw frame occasionally (not every frame)
+            raw_frame_base64 = None
+            if frame_counter % 30 == 0:
+                _, raw_buffer = cv2.imencode('.jpg', raw_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                raw_frame_base64 = base64.b64encode(raw_buffer).decode('utf-8')
 
             response = {
                 "frame_id": int(time.time() * 1000),
@@ -617,13 +734,16 @@ async def websocket_stream(websocket: WebSocket):
                 "light_status": light_status,
                 "fan_status": fan_status,
                 "processing_time_ms": processing_time,
-                "frame": f"data:image/jpeg;base64,{frame_base64}"
+                "privacy_enabled": detector.privacy_enabled if detector else False,
+                "frame": f"data:image/jpeg;base64,{frame_base64}",
+                "raw_frame": f"data:image/jpeg;base64,{raw_frame_base64}" if raw_frame_base64 else None
             }
 
             await websocket.send_json(response)
 
-            # ~30 fps cap
-            await asyncio.sleep(0.033)
+            # Minimal sleep - just yield to event loop
+            await asyncio.sleep(0.001)
+            frame_counter += 1
 
     except WebSocketDisconnect:
         print("WebSocket disconnected")

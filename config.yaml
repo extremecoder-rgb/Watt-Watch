@@ -65,3 +65,36 @@ appliance:
     fan_model: "ceiling-fan-detection-epfsk/1"
   # Use temp files for API inference
   use_temp_files: true
+
+# Privacy / Anonymization settings
+privacy:
+  # Enable privacy-first ghost mode (face anonymization)
+  enabled: true
+  # Blur method: "gaussian" or "pixelate"
+  blur_method: "pixelate"
+  # Blur level: kernel size for gaussian
+  blur_level: 99
+  # Pixelate blocks: number of blocks (lower = more pixelated)
+  pixelate_blocks: 4
+  # Face detection fallback: estimate from person bbox if no Haar cascade
+  use_person_bbox_fallback: true
+  # Performance: skip face detection every N frames
+  skip_frames: 3
+  # Storage settings
+  storage:
+    save_raw: false
+    save_anonymized: false
+    raw_dir: "data/raw"
+    anonymized_dir: "data/anonymized"
+    save_every_n_frames: 10
+
+# Alert settings for waste detection
+alerts:
+  enabled: true
+  initial_delay_seconds: 300
+  repeat_interval_seconds: 3600
+  storage:
+    enabled: true
+    events_file: "output/waste_events.json"
+    thumbnails_dir: "data/alerts"
+    thumbnail_width: 320
