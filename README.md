@@ -1,19 +1,19 @@
-# WattWatch ⚡ 
+# CamSense.ai ⚡ 
 
 ### Intelligent Energy & Occupancy Monitoring System
 
-WattWatch is a state-of-the-art computer vision solution designed to eliminate energy waste in institutional and residential buildings. Using deep learning and real-time video analysis, it detects room occupancy and appliance states to identify efficiency gaps and automate alerts.
+CamSense.ai is a state-of-the-art computer vision solution designed to eliminate energy waste in institutional and residential buildings. Using deep learning and real-time video analysis, it detects room occupancy and appliance states to identify efficiency gaps and automate alerts.
 
 ---
 
-## 🚀 QWOT Analysis Framework
+## 📊 SWOT Analysis
 
-WattWatch operates on the **QWOT** framework, a specialized methodology for intelligent energy management:
+CamSense.ai leverages cutting-edge technology while maintaining a strategic focus on efficiency and scalability:
 
--   **Q - Quantitative Measurement**: Real-time conversion of appliance states (Light, Fan, Monitor) into measurable power metrics (Watts, $/hr, CO2 footprint) using configurable wattage profiles.
--   **W - Waste Identification**: Instant detection of "Efficiency Gaps"—scenarios where rooms are unoccupied but appliances remain active—triggering persistence logging and automated alerts.
--   **O - Occupancy Context**: Beyond simple PIR sensors, WattWatch uses YOLOv8 to track spatial occupancy in micro-zones, allowing for granular control and privacy-focused monitoring.
--   **T - Technological Automation**: Seamless integration of Edge AI (YOLO), Cloud Inference (Roboflow), and Communication APIs (Twilio) to close the loop between detection and action.
+-   **Strengths**: Real-time YOLOv8-based person detection, custom appliance state recognition (Light/Fan/Monitor), low-latency WebRTC streaming, and privacy-centric data handling.
+-   **Weaknesses**: Initial hardware setup requirements for camera placement and dependable network bandwidth for high-resolution edge inference.
+-   **Opportunities**: Integration with Smart Home/Building HVAC systems, expansion into corporate ESG reporting, and potential for predictive energy usage analytics.
+-   **Threats**: Rapidly evolving data privacy regulations (GDPR/FERPA) and competition from legacy hardware-based occupancy sensors (PIR).
 
 ---
 
@@ -63,7 +63,7 @@ WattWatch operates on the **QWOT** framework, a specialized methodology for inte
 ### 2. Installation
 ```powershell
 # Clone the repository
-git clone https://github.com/wattwatch/watt-watch.git
+git clone https://github.com/extremecoder-rgb/Watt-Watch.git
 cd watt-watch
 
 # Install Backend Dependencies
@@ -88,8 +88,8 @@ npm run dev
 
 ---
 
-## 📊 Energy Impact
-WattWatch helps organizations reduce their electricity footprint by identifying **Passive Energy Leakage**—often accounting for up to 30% of institutional power waste.
+## 📈 Energy Impact
+CamSense.ai helps organizations reduce their electricity footprint by identifying **Passive Energy Leakage**—often accounting for up to 30% of institutional power waste.
 
 ---
-*Developed by the WattWatch Team*
+*Developed by the CamSense.ai Team*
