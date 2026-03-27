@@ -185,32 +185,45 @@ body {
    ──────────────────────────────────────────── */
 .main-viewport {
   height: 100%;
-  min-height: 0;       /* critical: prevents flex blowout */
-  padding: 20px;
+  min-height: 0;
+  padding: 15px;
   display: flex;
   flex-direction: column;
+  gap: 15px;
   background: radial-gradient(circle at center, rgba(34,211,238,0.03) 0%, transparent 70%);
-  overflow: hidden;
+  overflow-y: auto;   /* Changed to allow scrolling if content overflows vertically */
+}
+
+.main-viewport.multi-room {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(2, minmax(300px, 1fr));
 }
 
 .video-container {
-  flex: 1;
-  min-height: 0;       /* critical: prevents flex blowout */
+  min-height: 0;
   background: #000;
-  border: 2px solid var(--accent-blue);
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
   display: flex;
   flex-direction: column;
-  overflow: hidden;     /* never let image break the border */
+  overflow: hidden;
+  position: relative;
+  transition: border-color 0.3s ease;
+}
+
+.video-container:hover {
+  border-color: var(--accent-blue);
 }
 
 .video-header {
   flex-shrink: 0;
   display: flex;
   justify-content: space-between;
-  padding: 7px 14px;
-  background: rgba(34, 211, 238, 0.1);
-  border-bottom: 1px solid var(--accent-blue);
+  align-items: center;
+  padding: 5px 12px;
+  background: rgba(34, 211, 238, 0.05);
+  border-bottom: 1px solid rgba(34, 211, 238, 0.2);
 }
 
 .v-tag   { font-size: 0.58rem; color: var(--accent-blue); letter-spacing: 1px; }
@@ -223,7 +236,7 @@ body {
 /* The frame area: takes remaining height, never overflows */
 .video-frame {
   flex: 1;
-  min-height: 0;       /* critical */
+  min-height: 0;
   position: relative;
   display: flex;
   align-items: center;
@@ -233,12 +246,9 @@ body {
 }
 
 .pixel-stream {
-  /* Fill available space without pushing the container */
-  max-width: 100%;
-  max-height: 100%;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover; /* Changed from contain to cover to fill the square/wide container */
   display: block;
 }
 
@@ -291,10 +301,10 @@ body {
   overflow-x: hidden;
   background: rgba(10, 15, 25, 0.95);
   border-left: 1px solid rgba(255, 255, 255, 0.05);
-  padding: 16px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 /* Scrollbar styling */

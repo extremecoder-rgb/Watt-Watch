@@ -178,14 +178,9 @@ class MultiRoomDetector:
         self._load_models()
         self._init_rooms()
         # Appliance status cache (updated by background thread)
-        self._last_light_status = Status.OFF
-        self._last_fan_status = Status.OFF
-        self._last_monitor_status = Status.OFF
-        self._last_light_result = None
-        self._last_fan_result = None
-        self._last_monitor_result = None
+        self._appliance_status = {}
         # Background appliance detection
-        self._latest_appliance_frame = None
+        self._latest_appliance_frames = {}
         self._latest_result = None
         self._stop_event = threading.Event()
         self._appliance_frame_event = threading.Event()
@@ -247,10 +242,10 @@ class MultiRoomDetector:
             self._appliance_thread.join(timeout=2.0)
             print("Background appliance detection thread stopped")
 
-    def submit_appliance_frame(self, frame: np.ndarray):
+    def submit_appliance_frame(self, frame: np.ndarray, room_id: str):
         """Push a frame to the appliance detection queue (non-blocking)."""
         with self._lock:
-            self._latest_appliance_frame = frame.copy()
+            self._latest_appliance_frames[room_id] = frame.copy()
         self._appliance_frame_event.set()
 
     def _appliance_detection_loop(self):
@@ -262,32 +257,37 @@ class MultiRoomDetector:
             if not triggered:
                 continue
 
-            frame_to_process = None
+            frames_to_process = {}
             with self._lock:
-                if self._latest_appliance_frame is not None:
-                    frame_to_process = self._latest_appliance_frame.copy()
-                    self._latest_appliance_frame = None
+                frames_to_process = self._latest_appliance_frames.copy()
+                self._latest_appliance_frames.clear()
             self._appliance_frame_event.clear()
 
-            if frame_to_process is None or self.appliance_recognizer is None:
+            if not frames_to_process or self.appliance_recognizer is None:
                 continue
 
-            try:
-                results = self.appliance_recognizer.detect_all_appliances(frame_to_process)
-                with self._lock:
-                    for r in results:
-                        print(f"[BG Appliance] {r.appliance_type.value}: {r.status.value} (conf={r.confidence:.2f})")
-                        if r.appliance_type == ApplianceType.LIGHT:
-                            self._last_light_status = r.status
-                            self._last_light_result = r
-                        elif r.appliance_type == ApplianceType.CEILING_FAN:
-                            self._last_fan_status = r.status
-                            self._last_fan_result = r
-                        elif r.appliance_type == ApplianceType.MONITOR:
-                            self._last_monitor_status = r.status
-                            self._last_monitor_result = r
-            except Exception as e:
-                print(f"[BG Appliance] Error: {e}")
+            for room_id, frame_to_process in frames_to_process.items():
+                try:
+                    results = self.appliance_recognizer.detect_all_appliances(frame_to_process)
+                    with self._lock:
+                        if room_id not in self._appliance_status:
+                            self._appliance_status[room_id] = {
+                                "light": Status.OFF, "fan": Status.OFF, "monitor": Status.OFF,
+                                "light_res": None, "fan_res": None, "monitor_res": None
+                            }
+                        for r in results:
+                            print(f"[BG Appliance {room_id}] {r.appliance_type.value}: {r.status.value} (conf={r.confidence:.2f})")
+                            if r.appliance_type == ApplianceType.LIGHT:
+                                self._appliance_status[room_id]["light"] = r.status
+                                self._appliance_status[room_id]["light_res"] = r
+                            elif r.appliance_type == ApplianceType.CEILING_FAN:
+                                self._appliance_status[room_id]["fan"] = r.status
+                                self._appliance_status[room_id]["fan_res"] = r
+                            elif r.appliance_type == ApplianceType.MONITOR:
+                                self._appliance_status[room_id]["monitor"] = r.status
+                                self._appliance_status[room_id]["monitor_res"] = r
+                except Exception as e:
+                    print(f"[BG Appliance] Error for room {room_id}: {e}")
     
     def _init_rooms(self):
         """Initialize room data."""
@@ -402,12 +402,13 @@ class MultiRoomDetector:
         # Get last known status from background thread cache
         room = self._rooms.get(room_id)
         with self._lock:
-            light_status = self._last_light_status.value
-            fan_status = self._last_fan_status.value
-            monitor_status = self._last_monitor_status.value
+            status = self._appliance_status.get(room_id, {})
+            light_status = status.get("light", Status.OFF).value if hasattr(status.get("light"), "value") else "OFF"
+            fan_status = status.get("fan", Status.OFF).value if hasattr(status.get("fan"), "value") else "OFF"
+            monitor_status = status.get("monitor", Status.OFF).value if hasattr(status.get("monitor"), "value") else "OFF"
 
         # Feed frame to background appliance detector
-        if self.appliance_recognizer and self._latest_appliance_frame is not None:
+        if self.appliance_recognizer and getattr(self, "_latest_appliance_frames", {}).get(room_id) is not None:
             pass  # background thread picks it up
 
         # Update room data
@@ -462,7 +463,7 @@ class MultiRoomDetector:
 
 # Global state
 app_state = {
-    "capture": None,
+    "captures": {},
     "detector": None,
     "running": False,
     "config": {}
@@ -484,15 +485,17 @@ class CameraConfig(BaseModel):
     url: str
     username: Optional[str] = None
     password: Optional[str] = None
+    room_id: str = "room-101"
 
 
 @app.post("/api/camera/connect")
 async def connect_camera(config: CameraConfig):
     """Connect to IP webcam."""
+    room_id = config.room_id
     try:
-        # Stop existing capture
-        if app_state["capture"]:
-            app_state["capture"].release()
+        # Stop existing capture for this room
+        if room_id in app_state["captures"]:
+            app_state["captures"][room_id].release()
         
         # Load config
         import yaml
@@ -535,10 +538,11 @@ async def connect_camera(config: CameraConfig):
         print("Camera connected successfully. Initializing detector...")
 
         try:
-            app_state["capture"] = capture
-            app_state["detector"] = MultiRoomDetector(app_state["config"])
-            # Start the background appliance detection thread
-            app_state["detector"].start_background_processing()
+            app_state["captures"][room_id] = capture
+            if not app_state["detector"]:
+                app_state["detector"] = MultiRoomDetector(app_state["config"])
+                # Start the background appliance detection thread
+                app_state["detector"].start_background_processing()
         except Exception as det_e:
             import traceback
             print(f"Detector initialization failed: {traceback.format_exc()}")
@@ -561,13 +565,19 @@ async def connect_camera(config: CameraConfig):
         )
 
 
+class DisconnectConfig(BaseModel):
+    room_id: str = "room-101"
+
 @app.post("/api/camera/disconnect")
-async def disconnect_camera():
+async def disconnect_camera(config: DisconnectConfig):
     """Disconnect from IP webcam."""
-    if app_state["capture"]:
-        app_state["capture"].release()
-        app_state["capture"] = None
-    app_state["running"] = False
+    room_id = config.room_id
+    if room_id in app_state["captures"]:
+        app_state["captures"][room_id].release()
+        del app_state["captures"][room_id]
+        
+    if not app_state["captures"]:
+        app_state["running"] = False
     return {"status": "disconnected"}
 
 
@@ -591,7 +601,7 @@ async def get_status():
     
     return {
         "running": app_state["running"],
-        "camera_connected": app_state["capture"] is not None,
+        "camera_connected": len(app_state["captures"]) > 0,
         "frame_count": app_state["detector"]._frame_count if app_state["detector"] else 0,
         "privacy_enabled": app_state["detector"].privacy_enabled if app_state["detector"] else False,
         "rooms": rooms_data
@@ -782,8 +792,8 @@ async def get_energy_metrics():
     }
 
 
-@app.websocket("/ws/stream")
-async def websocket_stream(websocket: WebSocket):
+@app.websocket("/ws/stream/{room_id}")
+async def websocket_stream(websocket: WebSocket, room_id: str):
     """WebSocket endpoint for real-time video streaming."""
     await websocket.accept()
 
@@ -802,12 +812,13 @@ async def websocket_stream(websocket: WebSocket):
 
     try:
         while True:
-            if not app_state["running"] or not app_state["capture"]:
+            capture = app_state["captures"].get(room_id)
+            if not capture:
                 await asyncio.sleep(0.1)
                 continue
 
             # Read frame (this is where most of the latency comes from - network)
-            frame = app_state["capture"].read_frame()
+            frame = capture.read_frame()
             if frame is None:
                 await asyncio.sleep(0.01)
                 continue
@@ -866,7 +877,7 @@ async def websocket_stream(websocket: WebSocket):
                 
                     # --- Submit frame to background appliance detector ---
                     if frame_counter % APPLIANCE_SUBMIT_EVERY == 0:
-                        detector.submit_appliance_frame(proc_frame)
+                        detector.submit_appliance_frame(proc_frame, room_id)
                 else:
                     # Use cached values
                     person_count = cached_person_count
@@ -874,15 +885,16 @@ async def websocket_stream(websocket: WebSocket):
 
                 # --- Read cached appliance status ---
                 with detector._lock:
-                    light_status = detector._last_light_status.value
-                    fan_status = detector._last_fan_status.value
-                    monitor_status = detector._last_monitor_status.value
+                    status = detector._appliance_status.get(room_id, {})
+                    light_status = status.get("light", Status.OFF).value if hasattr(status.get("light", Status.OFF), "value") else "OFF"
+                    fan_status = status.get("fan", Status.OFF).value if hasattr(status.get("fan", Status.OFF), "value") else "OFF"
+                    monitor_status = status.get("monitor", Status.OFF).value if hasattr(status.get("monitor", Status.OFF), "value") else "OFF"
                     cached_light = light_status
                     cached_fan = fan_status
                     cached_monitor = monitor_status
 
                 # Update room data
-                room = detector._rooms.get("room-101")
+                room = detector._rooms.get(room_id)
                 room_status = "waste" if (person_count == 0 and (light_status == "ON" or fan_status == "ON" or monitor_status == "ON")) else "secure"
                 if room:
                     room.person_count = person_count
@@ -902,7 +914,7 @@ async def websocket_stream(websocket: WebSocket):
                 fan_status = cached_fan
                 monitor_status = cached_monitor
                 
-                room = detector._rooms.get("room-101") if detector else None
+                room = detector._rooms.get(room_id) if detector else None
                 if room:
                     room.person_count = person_count
                     room.light_status = light_status
@@ -928,7 +940,7 @@ async def websocket_stream(websocket: WebSocket):
             
             # Check for alert and update internal waste state
             if detector and detector.alert_manager:
-                room = detector._rooms.get("room-101")
+                room = detector._rooms.get(room_id)
                 if room:
                     alert_event = detector.alert_manager.check_room(
                         room_id=room.room_id,
@@ -947,7 +959,7 @@ async def websocket_stream(websocket: WebSocket):
                 db = get_database()
                 if db:
                     db.buffer_detection(
-                        room_id="room-101",
+                        room_id=room_id,
                         timestamp=time.time(),
                         person_count=person_count,
                         light_status=light_status,
@@ -994,8 +1006,9 @@ async def websocket_stream(websocket: WebSocket):
                 scale_y = h_orig / int(h_orig * 640 / w_orig)
                 
                 with detector._lock:
+                    status_dict = detector._appliance_status.get(room_id, {})
                     appliance_data = [
-                        (detector._last_monitor_result, (0, 165, 255), "monitor") # Orange (BGR)
+                        (status_dict.get("monitor_res"), (0, 165, 255), "monitor") # Orange (BGR)
                     ]
                 
                 for res, color, label_prefix in appliance_data:
